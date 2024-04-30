@@ -11,8 +11,9 @@ The main function is at the bottom
 The code is all contained in this single file.
 */
 
-//const char *paths[2] = {"/bin/", "/usr/bin/"};
-const char ** paths;
+char ** paths;
+size_t paths_size;
+char* current_path;
 
 
 /*
@@ -38,7 +39,7 @@ char* parse_string(char* string, char*** ret_array, size_t* size){
     //Removing duplicate empty spaces and spaces at begining and end
     for (int i = 0; i < length; ++i){
 
-        if (string[i] == *delim){
+        if (string[i] == *delim || string[i] == '\t' || string[i] == '\n'){
 
             delim_flag = 1;
             continue;
@@ -98,20 +99,80 @@ char* parse_string(char* string, char*** ret_array, size_t* size){
     return free_p; //Freeing this will free all the strings in ret_array
 }
 
+//Not being used
+int validate_path(char* exe_name){
+
+    char p[PATH_MAX];
+
+    for(int i = 0; i < paths_size; ++i){
+        strcat(p, paths[i]); 
+        strcat(p, exe_name); 
+
+        if(access(p, X_OK) == 0){
+            printf("Ok it works\n");
+        } else {
+            printf("Did not find the desired result\n");
+            int error = errno;
+            printf("Error: %d\n", error);
+        }
+
+        printf("%s\n", p);
+        p[0] = '\0';
+    }
+    
+}
+
+//Adding new path to char
+void add_path(char* new_path){
+
+    char* string;
+    size_t new_path_length = strlen(new_path);
+    //If the path does not have the trailing / we add it
+    if(new_path[new_path_length - 1] != '/'){
+        ++new_path_length;
+        string = (char*) malloc((new_path_length + 1) * sizeof(char));
+        strcpy(string, new_path);
+        strcat(string, "/");
+    } else {
+        string = (char*) malloc((new_path_length + 1) * sizeof(char));
+        strcpy(string, new_path);
+    }
+
+    if(access(string, X_OK) == 0){
+        ++paths_size;
+        paths = realloc(paths, (paths_size) * sizeof(char*));
+        paths[paths_size - 1] = string;
+    } else {
+        free(string);
+        printf("Path is inacessible\n");
+    }
+
+}
+
 //Generates a new process and awaits its return
 void true_fork_exec(char ** array){
+
+    char * const * arr2 = (char* const *)array;
+    char path[PATH_MAX] = "\0";
+    for (int i = 0; i < paths_size; ++i){
+        strcpy(path, paths[i]);
+        strcat(path, arr2[0]);
+        if(access(path, X_OK) == 0){
+            break;           
+        } 
+        if(i == paths_size - 1){
+            printf("Failed to find command\n");
+            return;
+        }
+        path[0] = '\0';
+    }
+
     int rc = fork();
     if(rc < 0){
         printf("Fork Failed!\n");
         exit(1);
     } else if (rc == 0){
-        //printf("Child process! rc: %d\n", rc);
-        //Maybe a function that checks what needs to be checked here
-        //allocate pointer and concatenate
-        char * const * arr2 = (char* const *)array;
-        char p[500] = {"/bin/"}; //Should check all paths here
-        strcat(p, arr2[0]);
-        execv(p, arr2);
+        execv(path, arr2);
         printf("Error! %d\n", errno);
     } else {
         int rc_wait = wait(NULL);
@@ -122,20 +183,29 @@ void true_fork_exec(char ** array){
 }
 
 //Gets the current dir and prints it
-void get_dir(){
-    char cwd[PATH_MAX];
-    if(getcwd(cwd, sizeof(cwd)) != NULL){
-        printf("Current dir: %s\n", cwd);
+char* get_dir(){
+    //char cwd[PATH_MAX];
+    char* cwd_p = (char *) malloc((PATH_MAX + 1) * sizeof(char));
+    if(getcwd(cwd_p, PATH_MAX) != NULL){
+        //printf("Current dir: %s\n", cwd_p);
+        return cwd_p;
     } else{
-        printf("Failed to get current dir, Error: %d\n", errno);
+        //printf("Failed to get current dir, Error: %d\n", errno);
+        free(cwd_p);
+        return NULL;
     }
 }
 
+
+#ifndef TEST
 int main(){
 
     paths = malloc(sizeof(char**) * 2);
     paths[0] = "/bin/";
     paths[1] = "/usr/bin/";
+    paths_size = 2;
+
+    current_path = get_dir();
 
     //Let getline set these
     size_t size = 0;
@@ -171,7 +241,16 @@ int main(){
         }
 
         if(strcmp(c, "dir\n") == 0){
-            get_dir();
+            //char* p = get_dir();
+            //free(p);
+            printf("%s\n", current_path);
+            continue;
+        }
+
+        if(strcmp(c, "printpath\n") == 0){
+            for(int i = 0; i < paths_size; i++){
+                printf("%s\n", paths[i]);
+            }
             continue;
         }
 
@@ -181,6 +260,14 @@ int main(){
         char* free_p = parse_string(c, &ret_array, &s);
         //printf("ret_array %ld\n", ret_array);
 
+        if(strcmp(ret_array[0], "path") == 0){
+            printf("path command\n");
+            for(int i = 1; i < s; i++){
+                add_path(ret_array[i]);
+            }
+            free(free_p);
+            continue;
+        }
         //printf("%s", c);
         //printf("Size is: %d\n", size);
         true_fork_exec(ret_array);
@@ -188,9 +275,11 @@ int main(){
         for (int i = 0; i < s; ++i){
             //printf("%s\n", *(ret_array + i));
         }
+
         free(free_p);
     }
 
     //Never reaches here
     return 0;
 }
+#endif
