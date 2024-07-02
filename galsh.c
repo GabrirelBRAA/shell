@@ -11,9 +11,9 @@ The main function is at the bottom
 The code is all contained in this single file.
 */
 
-char ** paths;
+char ** paths; //paths stores all the paths the shell searches for commands
 size_t paths_size;
-char* current_path;
+char* current_path; //This is the current directory the program is in
 
 
 /*
@@ -150,7 +150,7 @@ void add_path(char* new_path){
 }
 
 //Generates a new process and awaits its return
-void true_fork_exec(char ** array){
+void fork_exec(char ** array){
 
     char * const * arr2 = (char* const *)array;
     char path[PATH_MAX] = "\0";
@@ -196,39 +196,14 @@ char* get_dir(){
     }
 }
 
-
-#ifndef TEST
-int main(){
-
-    paths = malloc(sizeof(char**) * 2);
-    paths[0] = "/bin/";
-    paths[1] = "/usr/bin/";
-    paths_size = 2;
-
-    current_path = get_dir();
-
-    //Let getline set these
+void batch_mode(FILE* file){
     size_t size = 0;
     char* c = NULL;
-
-    //Useful for checking paths later
-    /*
-    if(access("/bin/ls", X_OK) == 0){
-        printf("Ok it works\n");
-    } else {
-        printf("Did not find the desired result\n");
-        int error = errno;
-        printf("Error: %d", error);
-    }
-    */
-
-    //printf("wish>");
     while(1){
-        printf("wish> ");
-        int ret_size = getline(&c, &size, stdin);
+        int ret_size = getline(&c, &size, file);
         if(ret_size == -1){
-            if(feof(stdin)){
-                return 0;
+            if(feof(file)){
+                return;
             }
         }
 
@@ -237,7 +212,7 @@ int main(){
         }
 
         if(strcmp(c, "exit\n") == 0){
-            return 0;
+            return;
         }
 
         if(strcmp(c, "dir\n") == 0){
@@ -270,7 +245,7 @@ int main(){
         }
         //printf("%s", c);
         //printf("Size is: %d\n", size);
-        true_fork_exec(ret_array);
+        fork_exec(ret_array);
 
         for (int i = 0; i < s; ++i){
             //printf("%s\n", *(ret_array + i));
@@ -279,6 +254,104 @@ int main(){
         free(free_p);
     }
 
+}
+
+void interactive_mode(){
+    size_t size = 0;
+    char* c = NULL;
+    while(1){
+        printf("galsh> ");
+        int ret_size = getline(&c, &size, stdin);
+        if(ret_size == -1){
+            if(feof(stdin)){
+                return;
+            }
+        }
+
+        if(strcmp(c, "\n") == 0){
+            continue;
+        }
+
+        if(strcmp(c, "exit\n") == 0){
+            return;
+        }
+
+        if(strcmp(c, "dir\n") == 0){
+            //char* p = get_dir();
+            //free(p);
+            printf("%s\n", current_path);
+            continue;
+        }
+
+        if(strcmp(c, "printpath\n") == 0){
+            for(int i = 0; i < paths_size; i++){
+                printf("%s\n", paths[i]);
+            }
+            continue;
+        }
+
+        char** ret_array;
+        size_t s;
+
+        char* free_p = parse_string(c, &ret_array, &s);
+        //printf("ret_array %ld\n", ret_array);
+
+        if(strcmp(ret_array[0], "path") == 0){
+            printf("path command\n");
+            for(int i = 1; i < s; i++){
+                add_path(ret_array[i]);
+            }
+            free(free_p);
+            continue;
+        }
+        //printf("%s", c);
+        //printf("Size is: %d\n", size);
+        fork_exec(ret_array);
+
+        for (int i = 0; i < s; ++i){
+            //printf("%s\n", *(ret_array + i));
+        }
+
+        free(free_p);
+    }
+
+}
+
+
+#ifndef TEST
+int main(int argc, char** argv){
+
+
+    /* Allocates these initial directories as search paths*/
+    paths = malloc(sizeof(char**) * 2);
+    paths[0] = "/bin/";
+    paths[1] = "/usr/bin/";
+    paths_size = 2;
+
+    current_path = get_dir();
+
+    /*This part is supposed to read the .txt file and do all the specified commands*/
+    if(argc == 2){
+        FILE* f = fopen(argv[1], "r");
+        char* line = NULL;
+        size_t line_size;
+        batch_mode(f);
+        fclose(f);
+        exit(0);
+    }
+
+    //Useful for checking paths later
+    /*
+    if(access("/bin/ls", X_OK) == 0){
+        printf("Ok it works\n");
+    } else {
+        printf("Did not find the desired result\n");
+        int error = errno;
+        printf("Error: %d", error);
+    }
+    */
+
+    interactive_mode();
     //Never reaches here
     return 0;
 }
