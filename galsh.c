@@ -15,22 +15,24 @@ char ** paths; //paths stores all the paths the shell searches for commands
 size_t paths_size;
 char* current_path; //This is the current directory the program is in
 
+typedef struct Command{
+    char ** command_args;
+    size_t array_size;
+    char* output_file;
+} Command;
+
 
 /*
-    Parses the string by creating substrings using empty spaces as separators
-
-    Caller should call free on the returned pointer when done with the array
+    This function cleans the first string by removing duplicate empty spaces, tabs and newlines.
+    It returns the cleaned string in cleaned_string.
 */
-char* parse_string(char* string, char*** ret_array, size_t* size){
-
+void clean_string(char* string, char** cleaned_string, size_t* new_size){
     size_t s = 0; //size of return array
     char* delim = " ";
     size_t length = strlen(string);
-    char ** ret_arr = *ret_array;
 
     //New write string for parsing
-    char* new_parsed_string = malloc((length + 1) * sizeof(char));
-    char* free_p = new_parsed_string;
+    char* new_cleaned_string = malloc((length + 1) * sizeof(char));
 
     int delim_flag = 0; //true if we are in an empty space sequence
     int write_flag = 0; //true if we have already written some char
@@ -55,7 +57,7 @@ char* parse_string(char* string, char*** ret_array, size_t* size){
                 //This if means we were on an empty space sequence and are now in an letter
                 //write a single empty space to the buffer in place of the whole sequence of spaces
                 if (write_flag){
-                    new_parsed_string[write_i] = ' ';
+                    new_cleaned_string[write_i] = ' ';
                     ++write_i;
                     s++;
                 }
@@ -64,38 +66,81 @@ char* parse_string(char* string, char*** ret_array, size_t* size){
             }
         }
 
-        new_parsed_string[write_i] = string[i];
+        new_cleaned_string[write_i] = string[i];
         write_flag = 1;//write flag is used to stop writing an empty space if we have not written an actual letter before
         ++write_i;
 
     }
-    new_parsed_string[write_i] = '\0';
+    new_cleaned_string[write_i] = '\0';
     ++s;
 
-    //printf("%s\n", new_parsed_string);
-    //printf("length: %d", strlen(new_parsed_string));
-    //printf("size of s: %d", s);
-    //exit(0);
+    *new_size = s;
+    *cleaned_string = new_cleaned_string;
+}
 
-    ret_arr = malloc(1 + s * sizeof(long)); //Dont think this buffer is being allocated properly because of s variable
-    //printf("ret_arr %ld\n", ret_arr);
-    //printf("Allocated %d times\n", s);
+Command* extendCommandArray(Command* array, size_t* size){
+    ++size;
+    array = (Command*) realloc(array, *size * sizeof(Command)); 
+    return array + (*size - 1);
+}
 
+/*
+    Parses the string by creating substrings using empty spaces as separators
+
+    Caller should call free on the returned pointer when done with the array
+*/
+//free_pointer* parse_string(string*, Command*, size_t* size);
+char* parse_string(char* string, Command** array, size_t* size){
+
+    *array = (Command*) malloc(sizeof(Command));
+    size_t command_array_size = 1;
+    Command* current_command = *array;
+
+    size_t return_array_size = 0; //size of return array
+    char* delim = " ";
+    char** ret_arr;
+
+    //New write string for parsing
+    char* new_parsed_string;
+
+    clean_string(string, &new_parsed_string, &return_array_size);
+    char* free_p = new_parsed_string;
+
+    ret_arr = malloc(1 + return_array_size * sizeof(long)); 
     int position = 0;  
     char* current_string;
 
+    int next_is_output_file = 0;
+    int counter = 0;
     //Separating string and setting pointers in array
     while((current_string = strsep(&new_parsed_string, delim)) != NULL){
+        if(next_is_output_file){
+            current_command->output_file = current_string;     
+            break;
+        }
+
+        if(current_string == NULL){
+            printf("NULL pointer!\n");
+        }
         if(*current_string == '\0'){
             break;
+        } else if(*current_string == '>'){
+            next_is_output_file = 1;
+            ret_arr[position] = NULL;
+            //pipe command
+            //printf("Pipe command!\n");
+            continue;
         }
         ret_arr[position] = current_string;
         ++position;
     }
-    ret_arr[s] = NULL;
+    ret_arr[position] = NULL; //execv requires last pointer to be null
+    ++position;
 
-    *size = s;
-    *ret_array = ret_arr;
+    //*size = return_array_size;
+    *size = command_array_size;
+    current_command->array_size = position;
+    current_command->command_args = ret_arr;
     return free_p; //Freeing this will free all the strings in ret_array
 }
 
@@ -150,9 +195,11 @@ void add_path(char* new_path){
 }
 
 //Generates a new process and awaits its return
-void fork_exec(char ** array){
+void fork_exec(Command* command_array,  size_t command_array_size){
+    
+    //output = "output.txt";
 
-    char * const * arr2 = (char* const *)array;
+    char * const * arr2 = (char* const *)command_array->command_args;
     char path[PATH_MAX] = "\0";
     for (int i = 0; i < paths_size; ++i){
         strcpy(path, paths[i]);
@@ -172,6 +219,9 @@ void fork_exec(char ** array){
         printf("Fork Failed!\n");
         exit(1);
     } else if (rc == 0){
+        if(command_array->output_file){
+            freopen(command_array->output_file, "a+", stdout);
+        }
         execv(path, arr2);
         printf("Error! %d\n", errno);
     } else {
@@ -196,13 +246,14 @@ char* get_dir(){
     }
 }
 
-//TODO substitute this into the interactive and batch mode
-void process_command(FILE* file){
+//TODO:: File should go to fork exec to open the out pipe.
+void process_command(FILE* file, char* output){
 
         size_t size = 0;
         char *c = NULL;
+        free(c);
 
-        int ret_size = getline(&c, &size, stdin);
+        int ret_size = getline(&c, &size, file);
         if(ret_size == -1){
             if(feof(stdin)){
                 exit(0);
@@ -237,38 +288,42 @@ void process_command(FILE* file){
 
         char** ret_array;
         size_t s;
+        Command* command_array;
+        size_t command_array_size;
 
-        char* free_p = parse_string(c, &ret_array, &s);
+        //char* free_p = parse_string(c, &ret_array, &s);
+        char* free_p = parse_string(c, &command_array, &command_array_size);
 
-        if(strcmp(ret_array[0], "path") == 0){
-            printf("path command\n");
-            for(int i = 1; i < s; i++){
-                add_path(ret_array[i]);
+        //TODO make another function here
+        if(strcmp(command_array->command_args[0], "path") == 0 && command_array_size == 1){
+            for(int i = 1; i < command_array->array_size - 1; i++){
+                add_path(command_array->command_args[i]);
             }
             free(free_p);
             free(c);
             return;
         }
 
-        if(strcmp(ret_array[0], "cd") == 0){
-            chdir(ret_array[1]);
+        if(strcmp(command_array->command_args[0], "cd") == 0 && command_array_size == 1){
+            chdir(command_array->command_args[1]);
             current_path = get_dir();
             free(free_p);
             free(c);
             return;
         }
 
-        fork_exec(ret_array);
 
+        fork_exec(command_array, command_array_size);
 
         free(free_p);
+        //free(ret_array);
         free(c);
 
 }
 
 void batch_mode(FILE* file){
     while(1){
-        process_command(file);
+        process_command(file, NULL);
     }
 
 }
@@ -278,11 +333,9 @@ void interactive_mode(){
     char* c = NULL;
     while(1){
         printf("galsh> ");
-        process_command(stdin);
+        process_command(stdin, NULL);
     }
 }
-
-
 
 #ifndef TEST
 int main(int argc, char** argv){
@@ -322,6 +375,7 @@ int main(int argc, char** argv){
 }
 #endif
 
+/*
 //Old interactive function, not really used right now
 void interactive_mode_old(){
     size_t size = 0;
@@ -390,7 +444,9 @@ void interactive_mode_old(){
     }
 
 }
+*/
 
+/*
 //old batch mode function
 void batch_mode_old(FILE* file){
     size_t size = 0;
@@ -451,3 +507,4 @@ void batch_mode_old(FILE* file){
     }
 
 }
+*/
